@@ -291,7 +291,7 @@ print(s.shape)
 '''
 import load_data
 
-class bp_network:
+class bp_network_v1:
     """
     compared with the class BP ,the bp_network is more extensible
     and more easy to train the neural net work
@@ -327,49 +327,39 @@ class bp_network:
         predict = function(inputs=[x], outputs=prediction)
         return predict
 
-    def get_weights(self, x, y):
-        l = [None]*len(y)
-        for i in range(0, len(y)):
+    def get_weights(self, param_x, param_y): # todo :i think i need to involve the forwarprop into this function
+        """
+        l = [None]*len(param_y)
+        for i in range(0, len(param_y)):
             l[i] = 1.0
         l = np.array(l)
-        #x = T.vector('x')
-        #y = T.vector('y')
+        the variable that is not part of the computational graph of the cost
+         i think this is the case that the weights are calculated from the outer scope
+         in forwardprop
+        """
+        y = T.vector('y')
         predict = self.forwardprop()
-        #print('ok')
-        res = predict(x)
-        #r = np.argmax(res)
-        #print('r'.format(r))
-        print(res)
-        print(l-res)
-        error = T.sum(y * T.log(res) - (l - y) * T.log(l - res))
-        print(error)
-        #dw = []
-        #for i in range(0, self.layers-1):
-        #    dw.append(T.grad(error, self.weights[i])) # TODO:
-        #weights = self.weights.get_value()
-        #dw = T.grad(error, self.weights[0])
-        #dw = T.grad(error, self.weights[0].get_value())
-        self.weights[0].get_value()
-        print('OK')
-        dw = T.grad(cost=error, wrt=self.weights[0].get_value()) # error occured here
-        #dw = [T.grad(error, w) for w in self.weights]
-        get_dw = function(inputs=[x, y], outputs=dw)
+        res = predict(param_x)
+        #error = T.sum(y * T.log(res) - (l - y) * T.log(l - res))
+        error = T.sum(y * T.log(res) - (1. - y) * T.log(1. - res))
+        dw = [T.grad(cost=error, wrt=w) for w in self.weights]
+        get_dw = function(inputs=[y], outputs=dw) # todo but there the x and y is not claimed as a theano variable
         return get_dw
 
-    def get_biases(self, x, y):
-        l = [None]*len(y)
-        for i in range(0, len(y)):
+    def get_biases(self, param_x, param_y):
+        l = [None]*len(param_y)
+        for i in range(0, len(param_y)):
             l[i] = 1.0
         l = np.array(l)
         #x = T.vector('x')
-        #y = T.vector('y')
+        y = T.vector('y')
         predict = self.forwardprop()
-        res = predict(x)
+        res = predict(param_x)
         error = T.sum(y * T.log(res) - (l - y) * T.log(l - res))
         db = [T.grad(error, b) for b in self.biases]
         # TODO: grad method it used only by non-differentiable operator float64 or matrix
         # how to vectorize the output
-        get_db = function(inputs=[x, y], outputs=db)
+        get_db = function(inputs=[y], outputs=db)
         # can't it be calculated in batch ?
         return get_db
 
@@ -382,7 +372,7 @@ class bp_network:
         for x, y in mini_batch:
             get_weights = self.get_weights(x, y)
             get_biases = self.get_biases(x, y)
-            derivative_w, derivative_b = get_weights(x, y), get_biases(x, y)
+            derivative_w, derivative_b = get_weights(y), get_biases(y)
             delta_w = [deltaw+derivativew
                        for deltaw, derivativew in zip(delta_w, derivative_w)]
             delta_b = [deltab+derivativeb
@@ -424,14 +414,18 @@ class bp_network:
         accuracy = 1.0 - error*1.0/len(test_data)
         return accuracy
 # test
-
-#bp = bp_network([784, 30, 10])
-#training_data = load_data.get_training_data(10)
-#bp.SGD(training_data, 10, 1, 0.3)
-
 # involve all the function above into one, maybe will make it right
 
 class a_simple_test:
+    """
+    this test mainly test whether the list can be used in calculating the gradient
+    or calculating the gradients in batch
+    and the result shows that it's not the case that list caused the error
+    and there should be another test to see whether the parameter oustside the scope
+    caused the error
+    and the final test result demonstrates my thoughts
+    and it show the theano function result can be used in another theano function
+    """
     def __init__(self, sizes):
         param = [p for p in sizes]
         self.layers = len(sizes)
@@ -439,24 +433,140 @@ class a_simple_test:
                       for p in param]
 
     def a_additional_function(self):
-        pass
-
-    def test(self):
         x = T.dscalar('x')
-        #y = T.dscalar('y')
-        #z = T.dscalar('z')
-        res = 1.0
+        out = 1.0
         for i in range(0, self.layers):
-            res *= self.param[i]
+            out *= self.param[i]
+        out *= x
+        fp = function(inputs=[x], outputs=out)
+        return fp
+
+    def test(self, param_x):
+        x = T.dscalar('x')
+        fp = self.a_additional_function()
+        out = fp(param_x)  # todo error maybe the function need a parameter this time cause it is a call
+        print(out)
+        res = 1.0
+        res *= out
         res *= x
         dp = [T.grad(res, p) for p in self.param]
         f = function(inputs=[x], outputs=dp)
         print('ok')
         return f
 
-a_test = a_simple_test([30, 10, 5])
-f = a_test.test()
-print(f(3))
+#a_test = a_simple_test([30, 10, 5])
+#f = a_test.test(1.0)
+#print(f(3))
+
+class bp_network_v2:
+    def __init__(self, sizes):
+        self.layers = len(sizes)
+        weights = [np.random.randn(x, y)
+                   for x, y in zip(sizes[:-1], sizes[1:])]
+        biases = [np.random.randn(1, y)
+                  for y in sizes[1:]]
+
+        self.weights = [theano.shared(w)
+                        for w in weights]
+        self.biases = [theano.shared(b)
+                       for b in biases]
+
+    def SGD(self, training_data, mini_batch_size, epoch, eta):
+        n = len(training_data)
+        for i in range(epoch):
+            np.random.shuffle(training_data)
+            mini_batches = [training_data[k:k + mini_batch_size]
+                            for k in range(0, n, mini_batch_size)]
+            for mini_batch in mini_batches:
+                self.update(mini_batch, eta)
+            print('SGD {} over'.format(i))
+
+    def update(self, mini_batch, eta):
+        delta_w = [np.zeros(w.get_value().shape)  # TODO:NoneType object has no attribute 'get_value'
+                   for w in self.weights]
+        delta_b = [np.zeros(b.get_value().shape)
+                   for b in self.biases]
+        # here needs a test
+        for w in self.weights:
+            print(w.get_value().shape)
+
+        t_x = T.vector('t_x')
+        t_y = T.vector('t_y')
+        a = t_x
+        for w, b in zip(self.weights, self.biases):
+            a = T.nnet.sigmoid(T.dot(a, w) + b)
+        # a get
+        error = T.sum(t_y * T.log(a) - (1. - t_y) * T.log(1. - a))
+
+        dw = [T.grad(error, w) for w in self.weights]
+        db = [T.grad(error, b) for b in self.biases]
+
+        get_dw = function(inputs=[t_x, t_y], outputs=dw)
+        get_db = function(inputs=[t_x, t_y], outputs=db)
+
+        for x, y in mini_batch:
+            derivative_w = get_dw(x, y)
+            derivative_b = get_db(x, y)
+            delta_w = [deltaw+derivativew
+                       for deltaw, derivativew in zip(delta_w, derivative_w)]
+            delta_b = [deltab+derivativeb
+                       for deltab, derivativeb in zip(delta_b, derivative_b)]
+
+        tempw = [w.get_value() - (eta * 1.0 / len(mini_batch)) * deltaw
+                 for w, deltaw in zip(self.weights, delta_w)]
+
+        tempb = [b.get_value() - (eta * 1.0 / len(mini_batch)) * deltab
+                 for b, deltab in zip(self.biases, delta_b)]
+        # change the name of variable of dw to deltaw and the bug fixed
+
+        for tw in tempw:
+            print('shape:{}'.format(tw.shape))
+        self.weights = [w.set_value(tw)
+                    for w, tw in zip(self.weights, tempw)]
+        self.biases = [b.set_value(tb)
+                   for b, tb in zip(self.biases, tempb)]
+        print('a mini_batch updte over')
+
+        for w in self.weights:
+            print(w.get_value().shape)  # test shows an error occured here
+            # the w is a nonetype ? and has no attribute of get_value
+
+        # after update, the self.weights become the NoneType
+
+    def forwardprop(self):
+        x = T.vector('x')
+        res = x
+        for w, b in zip(self.weights, self.biases):
+            res = T.nnet.sigmoid(T.dot(res, w) + b)
+        prediction = T.argmax(res)
+        predict = function(inputs=[x], outputs=prediction)
+        return predict
+
+    def evaluate(self, test_data):
+        accuracy = 0.0
+        error = 0
+        for x, y in test_data:
+            predict = self.forwardprop()
+            output = predict(x)
+            output_res = np.argmax(output)
+            real_res = np.argmax(y)
+            print('output:{}'.format(output_res))
+            print('real num:{}'.format(real_res))
+            if output_res != real_res:
+                error += 1
+        accuracy = 1.0 - error*1.0/len(test_data)
+        return accuracy
+
+# test
+
+bp = bp_network_v2(sizes=[784, 30, 10])
+test_data = load_data.get_test_data(10)
+#bp.evaluate(test_data) # get right
+training_data = load_data.get_training_data(100)
+bp.SGD(training_data, 10, 1, 0.3)
+# test result the toughest thing done !
+# and the temp_w caused the error
+# the value of it is ambiguous
 
 
 
